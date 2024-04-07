@@ -1,11 +1,11 @@
 import os
 
-from flask import Flask, render_template, request, flash, redirect, session, g
+from flask import Flask, render_template, request, flash, redirect, session, g, abort
 from flask_debugtoolbar import DebugToolbarExtension
 from sqlalchemy.exc import IntegrityError
 
 from forms import UserAddForm, LoginForm, MessageForm, UserEditForm
-from models import db, connect_db, User, Message, Follows
+from models import db, connect_db, User, Message, Follows, Likes
 
 CURR_USER_KEY = "curr_user"
 
@@ -304,7 +304,28 @@ def messages_destroy(message_id):
 
     return redirect(f"/users/{g.user.id}")
 
+@app.route("/users/liked_message/<int:message_id>", methods=["POST"])
+def messages_like(message_id):
+    """Toggle message liked or not liked"""
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
 
+    liked_message = Message.query.get_or_404(message_id)
+    if liked_message.user_id == g.user.id:
+        flash("You aren't able to like your own Warble!")
+        return redirect("/")
+    
+    user_likes = g.user.likes
+
+    if liked_message in user_likes:
+        g.user.likes = [like for like in user_likes if like != liked_message]
+    else:
+        g.user.likes.append(liked_message)
+
+    db.session.commit()
+
+    return redirect("/")
 ##############################################################################
 # Homepage and error pages
 
@@ -317,15 +338,14 @@ def homepage():
     - logged in: 100 most recent messages of followed_users
     """
 
-    if g.user:
-
+    if g.user:        
         followed_user_ids = [follow.user_being_followed_id for follow in Follows.query.filter_by(user_following_id=g.user.id).all()]
         user_ids = [g.user.id] + followed_user_ids
 
         # Query the last 100 messages from the current user and the users they follow
         last_100_messages = Message.query.filter(Message.user_id.in_(user_ids)).order_by(Message.timestamp.desc()).limit(100).all()
-
-        return render_template('home.html', messages=last_100_messages)
+        liked_msgs = [msg.id for msg in g.user.likes]
+        return render_template('home.html', messages=last_100_messages, likes=liked_msgs)
 
     else:
         return render_template('home-anon.html')
